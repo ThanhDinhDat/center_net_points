@@ -109,3 +109,8 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+# image extension
+*.png
+*.jpg
+demo/

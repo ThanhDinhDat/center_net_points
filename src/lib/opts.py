@@ -22,9 +22,13 @@ class opts(object):
                                   '2: show the network output features'
                                   '3: use matplot to display' # useful when lunching training with ipython notebook
                                   '4: save all visualizations to disk')
+    #demo options
     self.parser.add_argument('--demo', default='', 
                              help='path to image/ image folders/ video. '
                                   'or "webcam"')
+    self.parser.add_argument('--output_dir', type=str, default='', help='path to save images')
+    self.parser.add_argument('--save', type=bool, default=False, help='choose save images to output dir')
+    
     self.parser.add_argument('--load_model', default='',
                              help='path to pretrained model')
     self.parser.add_argument('--resume', action='store_true',

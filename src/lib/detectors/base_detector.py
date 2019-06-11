@@ -77,7 +77,10 @@ class BaseDetector(object):
     raise NotImplementedError
 
   def show_results(self, debugger, image, results):
-   raise NotImplementedError
+    raise NotImplementedError
+
+  def save_images(self, debugger, image, results, output_dir):
+    raise NotImplementedError
 
   def run(self, image_or_path_or_tensor, meta=None):
     load_time, pre_time, net_time, dec_time, post_time = 0, 0, 0, 0, 0
@@ -135,8 +138,11 @@ class BaseDetector(object):
     end_time = time.time()
     merge_time += end_time - post_process_time
     tot_time += end_time - start_time
+    
+    if self.opt.save:
+      self.save_images(debugger, image, results, self.opt.output_dir)
 
-    if self.opt.debug >= 1:
+    if not self.opt.save and self.opt.debug >= 1:
       self.show_results(debugger, image, results)
     
     return {'results': results, 'tot': tot_time, 'load': load_time,
