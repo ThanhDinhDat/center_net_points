@@ -39,7 +39,7 @@ class BaseTrainer(object):
     for state in self.optimizer.state.values():
       for k, v in state.items():
         if isinstance(v, torch.Tensor):
-          state[k] = v.to(device=device, non_blocking=True)
+          state[k] = v.to(device=device)
 
   def run_epoch(self, phase, epoch, data_loader):
     model_with_loss = self.model_with_loss
@@ -62,10 +62,9 @@ class BaseTrainer(object):
       if iter_id >= num_iters:
         break
       data_time.update(time.time() - end)
-
       for k in batch:
         if k != 'meta':
-          batch[k] = batch[k].to(device=opt.device)    
+          batch[k] = batch[k].to(device=opt.device)
       output, loss, loss_stats = model_with_loss(batch)
       loss = loss.mean()
       if phase == 'train':

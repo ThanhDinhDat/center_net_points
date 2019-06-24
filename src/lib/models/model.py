@@ -28,6 +28,7 @@ def create_model(arch, heads, head_conv):
   arch = arch[:arch.find('_')] if '_' in arch else arch
   get_model = _model_factory[arch]
   model = get_model(num_layers=num_layers, heads=heads, head_conv=head_conv)
+  print(model)
   return model
 
 def load_model(model, model_path, optimizer=None, resume=False, 

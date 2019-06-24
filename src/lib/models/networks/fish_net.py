@@ -21,7 +21,7 @@ class Bottleneck(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.k = k
 
-        btnk_ch = planes // 4
+        btnk_ch = planes // 2
         self.bn1 = nn.BatchNorm2d(inplanes)
         self.conv1 = nn.Conv2d(inplanes, btnk_ch, kernel_size=1, bias=False)
 
@@ -78,11 +78,29 @@ class Bottleneck(nn.Module):
 
 
 __all__ = ['fish']
+def fill_up_weights(up):
+    w = up.weight.data
+    f = math.ceil(w.size(2) / 2)
+    c = (2 * f - 1 - f % 2) / (2. * f)
+    for i in range(w.size(2)):
+        for j in range(w.size(3)):
+            w[0, 0, i, j] = \
+                (1 - math.fabs(i / f - c)) * (1 - math.fabs(j / f - c))
+    for c in range(1, w.size(0)):
+        w[c, 0, :, :] = w[0, 0, :, :] 
 
+def fill_fc_weights(layers):
+    for m in layers.modules():
+        if isinstance(m, nn.Conv2d):
+            nn.init.normal_(m.weight, std=0.001)
+            # torch.nn.init.kaiming_normal_(m.weight.data, nonlinearity='relu')
+            # torch.nn.init.xavier_normal_(m.weight.data)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
 
 class Fish(nn.Module):
     def __init__(self, block, num_cls=1000, num_down_sample=5, num_up_sample=3, trans_map=(2, 1, 0, 6, 5, 4),
-                 network_planes=None, num_res_blks=None, num_trans_blks=None):
+                 network_planes=None, num_res_blks=None, num_trans_blks=None, heads=None, head_conv=0):
         super(Fish, self).__init__()
         self.block = block
         self.trans_map = trans_map
@@ -95,8 +113,10 @@ class Fish(nn.Module):
         self.depth = len(self.network_planes)
         self.num_trans_blks = num_trans_blks
         self.num_res_blks = num_res_blks
+        self.heads = heads
+        self.head_conv = head_conv
         self.fish = self._make_fish(network_planes[0])
-
+        
     def _make_score(self, in_ch, out_ch=1000, has_pool=False):
         bn = nn.BatchNorm2d(in_ch)
         relu = nn.ReLU(inplace=True)
@@ -254,14 +274,43 @@ class FishNet(nn.Module):
         super(FishNet, self).__init__()
 
         inplanes = kwargs['network_planes'][0]
+        outplanes = inplanes
         # resolution: 224x224
         self.conv1 = self._conv_bn_relu(3, inplanes // 2, stride=2)
         self.conv2 = self._conv_bn_relu(inplanes // 2, inplanes // 2)
-        self.conv3 = self._conv_bn_relu(inplanes // 2, inplanes)
+        self.conv3 = self._conv_bn_relu(inplanes //2 , outplanes)
+        # self.conv4 = self._conv_bn_relu(outplanes, outplanes)
         self.pool1 = nn.MaxPool2d(3, padding=1, stride=2)
         # construct fish, resolution 56x56
         self.fish = Fish(block, **kwargs)
         self._init_weights()
+        
+        self.heads = kwargs['heads']
+        self.head_conv = kwargs['head_conv']
+        # self.head_conv = 32
+        for head in self.heads:
+            classes = self.heads[head]
+            if self.head_conv > 0:
+              fc = nn.Sequential(
+                  nn.Conv2d(inplanes, self.head_conv,
+                    kernel_size=3, padding=1, bias=True),
+                  nn.ReLU(inplace=True),
+                  nn.Conv2d(self.head_conv, classes, 
+                    kernel_size=1, stride=1, 
+                    padding=1 // 2, bias=True))
+              if 'hm' in head:
+                fc[-1].bias.data.fill_(-2.19)
+              else:
+                fill_fc_weights(fc)
+            else:
+              fc = nn.Conv2d(inplanes, classes, 
+                  kernel_size=1, stride=1, 
+                  padding=1 // 2, bias=True)
+              if 'hm' in head:
+                fc.bias.data.fill_(-2.19)
+              else:
+                fill_fc_weights(fc)
+            self.__setattr__(head, fc)
 
     def _conv_bn_relu(self, in_ch, out_ch, stride=1):
         return nn.Sequential(nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1, stride=stride, bias=False),
@@ -278,16 +327,26 @@ class FishNet(nn.Module):
                 m.bias.data.zero_()
 
     def forward(self, x):
+        print(x.shape)
         x = self.conv1(x)
+        print(x.shape)
         x = self.conv2(x)
+        print(x.shape)
         x = self.conv3(x)
+        print(x.shape)
+        # x = self.conv4(x)
+        # print(x.shape)
         x = self.pool1(x)
+        print(x.shape)
         score = self.fish(x)
+        print(score.shape)
         # 1*1 output
         out = score.view(x.size(0), -1)
-
-        return out
-
+        print(out.shape)
+        ret = {}
+        for head in self.heads:
+            ret[head] = self.__getattr__(head)(score)
+        return [ret]
 
 def fish(**kwargs):
     return FishNet(Bottleneck, **kwargs)
@@ -304,7 +363,7 @@ def fishnet99(**kwargs):
         'network_planes': [64, 128, 256, 512, 512, 512, 384, 256, 320, 832, 1600],
         'num_res_blks': [2, 2, 6, 2, 1, 1, 1, 1, 2, 2],
         'num_trans_blks': [1, 1, 1, 1, 1, 4],
-        'num_cls': 1000,
+        'num_cls': kwargs['head_conv'],
         'num_down_sample': 3,
         'num_up_sample': 3,
     }
@@ -324,7 +383,7 @@ def fishnet150(**kwargs):
         'network_planes': [64, 128, 256, 512, 512, 512, 384, 256, 320, 832, 1600],
         'num_res_blks': [2, 4, 8, 4, 2, 2, 2, 2, 2, 4],
         'num_trans_blks': [2, 2, 2, 2, 2, 4],
-        'num_cls': 1000,
+        'num_cls': kwargs['head_conv'],
         'num_down_sample': 3,
         'num_up_sample': 3,
     }
@@ -344,18 +403,22 @@ def fishnet201(**kwargs):
         'network_planes': [64, 128, 256, 512, 512, 512, 384, 256, 320, 832, 1600],
         'num_res_blks': [3, 4, 12, 4, 2, 2, 2, 2, 3, 10],
         'num_trans_blks': [2, 2, 2, 2, 2, 9],
-        'num_cls': 1000,
+        'num_cls': kwargs['head_conv'],
         'num_down_sample': 3,
         'num_up_sample': 3,
     }
     cfg = {**net_cfg, **kwargs}
     return fish(**cfg)
+
 fish_models = {
     'fishnet99': fishnet99,
     'fishnet150': fishnet150,
     'fishnet201': fishnet201
 }
 def get_fish(num_layers, heads, head_conv):
-
+    fish_cfg = {
+        'heads': heads,
+        'head_conv': 64,
+    }
     fish_net = 'fishnet{}'.format(num_layers)
-    return fish_models[fish_net]()
+    return fish_models[fish_net](**fish_cfg)

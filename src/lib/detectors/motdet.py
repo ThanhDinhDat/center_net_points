@@ -86,19 +86,19 @@ class MotdetDetector(BaseDetector):
                                  img_id='out_pred_{:.1f}'.format(scale))
 
   def show_results(self, debugger, image, results):
-    debugger.add_img(image, img_id=image_id)
+    debugger.add_img(image, img_id=self.image_id)
     for j in range(1, self.num_classes + 1):
       for bbox in results[j]:
         if bbox[4] > self.opt.vis_thresh:
-          debugger.add_coco_bbox(bbox[:4], j - 1, bbox[4], img_id=image_id)
+          debugger.add_coco_bbox(bbox[:4], j - 1, bbox[4], img_id=self.image_id)
     debugger.show_all_imgs(pause=self.pause)
 
   def save_images(self, debugger, image, results, output_dir):
-    debugger.add_img(image, img_id=image_id)
+    debugger.add_img(image, img_id=self.image_id)
     for j in range(1, self.num_classes + 1):
       for bbox in results[j]:
         if bbox[4] > self.opt.vis_thresh:
-          debugger.add_coco_bbox(bbox[:4], j - 1, bbox[4], img_id=image_id)
+          debugger.add_coco_bbox(bbox[:4], j - 1, bbox[4], img_id=self.image_id)
     if not os.path.isdir(output_dir):
       os.makedirs(output_dir)
     debugger.save_all_imgs(path=output_dir,genID=True)
