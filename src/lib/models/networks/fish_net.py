@@ -1,8 +1,22 @@
 from __future__ import division
-
-import torch.nn as nn
-import torch
 import math
+import torch
+from torch import nn
+import torch.nn.functional as F
+import torch.utils.model_zoo as model_zoo
+import os
+import math
+import logging
+import numpy as np
+from os.path import join
+from .DCNv2.dcn_v2 import DCN
+
+BN_MOMENTUM = 0.1
+
+def conv3x3(in_planes, out_planes, stride=1):
+    "3x3 convolution with padding"
+    return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
+                     padding=1, bias=False)
 
 class Bottleneck(nn.Module):
     def __init__(self, inplanes, planes, stride=1, mode='NORM', k=1, dilation=1):
@@ -257,6 +271,7 @@ class Fish(nn.Module):
 
             all_feat[stg_id + 1] = stg_blk(*in_feat)
             stg_id += 1
+            
             # loop exit
             if stg_id == self.depth:
                 score_feat = self.fish[self.depth-1][-2](all_feat[-1])
@@ -270,46 +285,49 @@ class Fish(nn.Module):
 
 
 class FishNet(nn.Module):
-    def __init__(self, block, **kwargs):
+    def __init__(self, block, down_ratio, **kwargs):
         super(FishNet, self).__init__()
 
         inplanes = kwargs['network_planes'][0]
-        outplanes = inplanes
+        self.first_level = int(np.log2(down_ratio))
+        channels = [16, 32, 64, 128, 256, 512]
+        in_channels= channels[self.first_level]
+        
         # resolution: 224x224
         self.conv1 = self._conv_bn_relu(3, inplanes // 2, stride=2)
         self.conv2 = self._conv_bn_relu(inplanes // 2, inplanes // 2)
-        self.conv3 = self._conv_bn_relu(inplanes //2 , outplanes)
-        # self.conv4 = self._conv_bn_relu(outplanes, outplanes)
+        self.conv3 = self._conv_bn_relu(inplanes //2 , inplanes)
         self.pool1 = nn.MaxPool2d(3, padding=1, stride=2)
+        
         # construct fish, resolution 56x56
         self.fish = Fish(block, **kwargs)
         self._init_weights()
         
+
         self.heads = kwargs['heads']
         self.head_conv = kwargs['head_conv']
-        # self.head_conv = 32
         for head in self.heads:
             classes = self.heads[head]
             if self.head_conv > 0:
-              fc = nn.Sequential(
-                  nn.Conv2d(inplanes, self.head_conv,
+                fc = nn.Sequential(
+                  nn.Conv2d(in_channels, self.head_conv,
                     kernel_size=3, padding=1, bias=True),
                   nn.ReLU(inplace=True),
                   nn.Conv2d(self.head_conv, classes, 
                     kernel_size=1, stride=1, 
-                    padding=1 // 2, bias=True))
-              if 'hm' in head:
-                fc[-1].bias.data.fill_(-2.19)
-              else:
-                fill_fc_weights(fc)
+                    padding=0, bias=True))
+                if 'hm' in head:
+                    fc[-1].bias.data.fill_(-2.19)
+                else:
+                    fill_fc_weights(fc)
             else:
-              fc = nn.Conv2d(inplanes, classes, 
+                fc = nn.Conv2d(in_channels, classes, 
                   kernel_size=1, stride=1, 
-                  padding=1 // 2, bias=True)
-              if 'hm' in head:
-                fc.bias.data.fill_(-2.19)
-              else:
-                fill_fc_weights(fc)
+                  padding=0, bias=True)
+                if 'hm' in head:
+                    fc.bias.data.fill_(-2.19)
+                else:
+                    fill_fc_weights(fc)
             self.__setattr__(head, fc)
 
     def _conv_bn_relu(self, in_ch, out_ch, stride=1):
@@ -334,15 +352,13 @@ class FishNet(nn.Module):
         print(x.shape)
         x = self.conv3(x)
         print(x.shape)
-        # x = self.conv4(x)
-        # print(x.shape)
         x = self.pool1(x)
         print(x.shape)
         score = self.fish(x)
         print(score.shape)
         # 1*1 output
-        out = score.view(x.size(0), -1)
-        print(out.shape)
+        # out = score.view(x.size(0), -1)
+        # print(out.shape)
         ret = {}
         for head in self.heads:
             ret[head] = self.__getattr__(head)(score)
@@ -415,10 +431,11 @@ fish_models = {
     'fishnet150': fishnet150,
     'fishnet201': fishnet201
 }
-def get_fish(num_layers, heads, head_conv):
+def get_fish(num_layers, heads, head_conv, down_ratio=16):
     fish_cfg = {
         'heads': heads,
-        'head_conv': 64,
+        'head_conv': 256,
+        'down_ratio': down_ratio
     }
     fish_net = 'fishnet{}'.format(num_layers)
     return fish_models[fish_net](**fish_cfg)

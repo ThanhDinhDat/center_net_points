@@ -11,7 +11,7 @@ import os
 import torch.utils.data as data
 
 class COCO(data.Dataset):
-  num_classes = 80
+  num_classes = 1
   default_resolution = [512, 512]
   mean = np.array([0.40789654, 0.44719302, 0.47026115],
                    dtype=np.float32).reshape(1, 1, 3)
@@ -82,7 +82,7 @@ class COCO(data.Dataset):
 
     print('==> initializing coco 2017 {} data.'.format(split))
     self.coco = coco.COCO(self.annot_path)
-    self.images = self.coco.getImgIds()
+    self.images = self.coco.getImgIds(catIds=self._valid_ids)
     self.num_samples = len(self.images)
 
     print('Loaded {} {} samples'.format(split, self.num_samples))
