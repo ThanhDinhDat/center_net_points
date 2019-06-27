@@ -280,7 +280,7 @@ def make_hg_layer(kernel, dim0, dim1, mod, layer=convolution, **kwargs):
     return nn.Sequential(*layers)
 
 
-class HourglassNet(exkp):
+class HourglassNet( ):
     def __init__(self, heads, num_stacks=2):
         n       = 5
         dims    = [256, 256, 384, 384, 384, 512]

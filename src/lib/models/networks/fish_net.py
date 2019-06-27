@@ -9,6 +9,8 @@ import math
 import logging
 import numpy as np
 from os.path import join
+from collections import OrderedDict
+
 from .DCNv2.dcn_v2 import DCN
 
 BN_MOMENTUM = 0.1
@@ -276,7 +278,7 @@ class Fish(nn.Module):
             if stg_id == self.depth:
                 score_feat = self.fish[self.depth-1][-2](all_feat[-1])
                 score = self.fish[self.depth-1][-1](score_feat)
-                return score
+                return score_feat
 
     def forward(self, x):
         all_feat = [None] * (self.depth + 1)
@@ -292,13 +294,19 @@ class FishNet(nn.Module):
         self.first_level = int(np.log2(down_ratio))
         channels = [16, 32, 64, 128, 256, 512]
         in_channels= channels[self.first_level]
-        
+        self.inplanes = 1056
         # resolution: 224x224
         self.conv1 = self._conv_bn_relu(3, inplanes // 2, stride=2)
         self.conv2 = self._conv_bn_relu(inplanes // 2, inplanes // 2)
         self.conv3 = self._conv_bn_relu(inplanes //2 , inplanes)
         self.pool1 = nn.MaxPool2d(3, padding=1, stride=2)
         
+        self.deconv_layers = self._make_deconv_layer(
+            3,
+            [1024, 512, 256],
+            [4, 4, 3],
+        )
+
         # construct fish, resolution 56x56
         self.fish = Fish(block, **kwargs)
         self._init_weights()
@@ -344,18 +352,65 @@ class FishNet(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
 
+    def _get_deconv_cfg(self, deconv_kernel, index):
+        if deconv_kernel == 4:
+            padding = 1
+            output_padding = 0
+        elif deconv_kernel == 3:
+            padding = 1
+            output_padding = 1
+        elif deconv_kernel == 2:
+            padding = 0
+            output_padding = 0
+
+        return deconv_kernel, padding, output_padding
+
+    def _make_deconv_layer(self, num_layers, num_filters, num_kernels):
+        assert num_layers == len(num_filters), \
+            'ERROR: num_deconv_layers is different len(num_deconv_filters)'
+        assert num_layers == len(num_kernels), \
+            'ERROR: num_deconv_layers is different len(num_deconv_filters)'
+
+        layers = []
+        for i in range(num_layers):
+            kernel, padding, output_padding = \
+                self._get_deconv_cfg(num_kernels[i], i)
+
+            planes = num_filters[i]
+            fc = DCN(self.inplanes, planes, 
+                    kernel_size=(3,3), stride=1,
+                    padding=1, dilation=1, deformable_groups=1)
+            # fc = nn.Conv2d(self.inplanes, planes,
+            #         kernel_size=3, stride=1, 
+            #         padding=1, dilation=1, bias=False)
+            fill_fc_weights(fc)
+            up = nn.ConvTranspose2d(
+                    in_channels=planes,
+                    out_channels=planes,
+                    kernel_size=kernel,
+                    stride=2,
+                    padding=padding,
+                    output_padding=output_padding,
+                    bias=False)
+            fill_up_weights(up)
+
+            layers.append(fc)
+            layers.append(nn.BatchNorm2d(planes, momentum=BN_MOMENTUM))
+            layers.append(nn.ReLU(inplace=True))
+            layers.append(up)
+            layers.append(nn.BatchNorm2d(planes, momentum=BN_MOMENTUM))
+            layers.append(nn.ReLU(inplace=True))
+            self.inplanes = planes
+
+        return nn.Sequential(*layers)
+
     def forward(self, x):
-        print(x.shape)
         x = self.conv1(x)
-        print(x.shape)
         x = self.conv2(x)
-        print(x.shape)
         x = self.conv3(x)
-        print(x.shape)
         x = self.pool1(x)
-        print(x.shape)
         score = self.fish(x)
-        print(score.shape)
+        score = self.deconv_layers(score)
         # 1*1 output
         # out = score.view(x.size(0), -1)
         # print(out.shape)
@@ -431,6 +486,37 @@ fish_models = {
     'fishnet150': fishnet150,
     'fishnet201': fishnet201
 }
+pretrained_path = {
+    'fishnet99': '../models/fishnet99_ckpt.tar',
+    'fishnet150': '../models/fishnet150_ckpt_welltrained.tar',
+    'fishnet201': '../models/fishnet201_ckpt_welltrained.tar',
+}
+
+def load_pretrain_path(model, arch):
+    path = pretrained_path[arch]
+    pretrained_state_dict = torch.load(path)
+    print("==> Loaded pretrained model from {}".format(path))
+    new_state_dict = OrderedDict()
+    print("Pretrained params:")
+    for k, v in pretrained_state_dict['state_dict'].items():
+        name = k[7:] # remove `module.`
+        # print(name)
+        new_state_dict[name] = v
+    print("Model params:")
+    new_dict = OrderedDict()
+    non_load = []
+    for k, v in model.state_dict().items():
+        # print(k)
+        if k in new_state_dict and v.size() == new_state_dict[k].size():
+            new_dict[k] = new_state_dict[k]
+        else:
+            new_dict[k] = v
+            non_load.append(k)
+    # print("Loaded dict: ", new_dict)
+    print("This weight is not loaded from checkpoint: {}".format(non_load))
+    model.load_state_dict(new_dict)
+    return model
+
 def get_fish(num_layers, heads, head_conv, down_ratio=16):
     fish_cfg = {
         'heads': heads,
@@ -438,4 +524,6 @@ def get_fish(num_layers, heads, head_conv, down_ratio=16):
         'down_ratio': down_ratio
     }
     fish_net = 'fishnet{}'.format(num_layers)
-    return fish_models[fish_net](**fish_cfg)
+    model = fish_models[fish_net](**fish_cfg)
+    model = load_pretrain_path(model=model, arch=fish_net)
+    return model

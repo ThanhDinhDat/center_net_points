@@ -313,7 +313,7 @@ def _vovnet(arch,
                    **kwargs)
     pretrained_path = {
         'vovnet57': "../models/vovnet57_torchvision.pth",
-        'vovnet39': "../models/vovnet57_torchvision.pth"
+        'vovnet39': "../models/vovnet39_torchvision.pth"
     }
     if pretrained:
         path = pretrained_path[arch]
